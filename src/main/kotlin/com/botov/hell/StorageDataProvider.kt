@@ -1,5 +1,6 @@
 package com.botov.hell
 
+import com.sun.org.slf4j.internal.LoggerFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
@@ -28,7 +29,6 @@ import ru.vtb.msa.afl.appmanager.util.bindIfExist
 import ru.vtb.msa.cache.manager.CacheManager
 import ru.vtb.msa.cache.manager.getOne
 import ru.vtb.msa.cache.serialization.ValueSerializer
-import ru.vtb.msa.core.log.getLogger
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
@@ -37,7 +37,6 @@ class StorageDataProvider(
     val shardName: String,
     val cacheManager: CacheManager,
     private val r2dbcTemplate: R2dbcEntityTemplate,
-    private val monitoringService: StorageMonitoringService,
     private val ttlDurationMinutes: Long
 ) {
 
@@ -60,15 +59,6 @@ class StorageDataProvider(
         putToDatabase(key, value)
         val existed = getFromDatabase(key).first()
         putToCache(key, CacheRecord(existed.value, existed.metadata))
-    }
-
-    suspend fun <T> addToSet(key: String, clazz: Class<T>, data: T) {
-        val record = getSet(key, clazz)
-        val set = record?.value?.toMutableSet() ?: mutableSetOf()
-        if (!set.contains(data)) {
-            set += data
-            put(key, set)
-        }
     }
 
     suspend fun getFromDatabaseByMdmId(key: String): List<CacheBackupEntity> = coroutineScope {
@@ -290,7 +280,6 @@ class StorageDataProvider(
             }
         }
 
-        monitoringService.notifyDatabaseOperation(shardName, PUT_VALUE)
         r2dbcTemplate.databaseClient.sql(query)
             .bind("key1", compositeKey.first)
             .bind("value", value)
@@ -314,6 +303,6 @@ class StorageDataProvider(
 
     companion object {
         private const val compositeKeyDelimiter = ":"
-        private val logger = getLogger<ApplicationProcessor>()
+        private val logger = LoggerFactory.getLogger(Integer.class) // bad
     }
 }
