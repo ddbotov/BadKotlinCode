@@ -1,6 +1,5 @@
 package com.botov.hell
 
-import com.sun.org.slf4j.internal.LoggerFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
@@ -13,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.slf4j.MDCContext
+import org.slf4j.LoggerFactory
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
@@ -200,6 +200,6 @@ class StorageDataProvider(
 
     companion object {
         private const val compositeKeyDelimiter = ":"
-        private val logger = LoggerFactory.getLogger(Integer.class)
+        private val logger = LoggerFactory.getLogger(StorageDataProvider.javaClass)
     }
 }
