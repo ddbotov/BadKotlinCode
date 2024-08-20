@@ -1,14 +1,9 @@
 package com.botov.hell
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.toList
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.slf4j.MDCContext
@@ -17,56 +12,40 @@ import org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
-import java.sql.Timestamp
-import java.time.Duration
-import java.time.Instant
 
 data class CacheRecord<T>(
     val value: T?,
-    val metadata: BackupMetadata
-)
-
-data class BackupMetadata(
-    val createdAt: Instant,
-    val updatedAt: Instant
 )
 
 data class DataRecord<T>(
     val value: T,
-    val metadata: BackupMetadata,
     val compositeKey: Pair<String, String?>
 )
 
 data class CacheBackupEntity(
     val key1: String,
     val key2: String?,
-    val value: String,
-    val createdAt: Instant,
-    val updatedAt: Instant
+    val value: String
 )
 
 interface CacheManager {
     fun <T> getOne(key: String): T?
-    fun put(key: String, value: CacheRecord<String>, ttl: Duration?)
+    fun put(key: String, value: CacheRecord<String>)
     fun <T> deserialize(it: String, clazz: Class<T>): T
     fun <T> serialize(value: T): String
 }
 
-fun DatabaseClient.GenericExecuteSpec.bindIfExist(name: String, value: Any?): DatabaseClient.GenericExecuteSpec =
-    if (value != null) bind(name, value) else this
-
 class StorageDataProvider(
     val shardName: String,
     val cacheManager: CacheManager,
-    private val r2dbcTemplate: R2dbcEntityTemplate,
-    private val ttlDurationMinutes: Long
+    private val r2dbcTemplate: R2dbcEntityTemplate
 ) {
 
     suspend fun <T> put(key: String, value: T) {
         val serializedValue = cacheManager.serialize(value)
         putToDatabase(key, serializedValue)
         val existed = getFromDatabase(key).first()
-        putToCache(key, CacheRecord(existed.value, existed.metadata))
+        putToCache(key, CacheRecord(existed.value))
     }
 
     suspend fun <T> getOne(key: String, clazz: Class<T>): DataRecord<T>? =
@@ -77,15 +56,24 @@ class StorageDataProvider(
         return when {
             cached?.value != null -> {
                 val obj = action.invoke(cached.value)
-                DataRecord(obj, cached.metadata, key.compositeKey)
+                DataRecord(obj, key.compositeKey)
             }
 
             else -> {
                 val record = getFromDatabase(key).firstOrNull() ?: return null
                 val obj = action.invoke(record.value)
                 restoreCache(record)
-                DataRecord(obj, record.metadata, record.key1 to record.key2)
+                DataRecord(obj, record.key1 to record.key2)
             }
+        }
+    }
+
+    private suspend fun putToCache(key: String, record: CacheRecord<String>) {
+        try {
+            cacheManager.put(key = key, value = record)
+        } catch (ex: Exception) {
+            logger.error("Exception while updating cache shard '$shardName' key = $key", ex)
+            throw ex
         }
     }
 
@@ -139,18 +127,9 @@ class StorageDataProvider(
         return@coroutineScope entities.merge().toList()
     }
 
-    private suspend fun putToCache(key: String, record: CacheRecord<String>) {
-        try {
-            cacheManager.put(key = key, value = record, ttl = Duration.ofMinutes(ttlDurationMinutes))
-        } catch (ex: Exception) {
-            logger.error("Exception while updating cache shard '$shardName' key = $key", ex)
-            throw ex
-        }
-    }
-
     private suspend fun restoreCache(entity: CacheBackupEntity) {
         GlobalScope.launch(Dispatchers.IO + MDCContext()) {
-            val record = CacheRecord(entity.value, entity.metadata)
+            val record = CacheRecord(entity.value)
             val key = if (entity.key2 == null) entity.key1 else "${entity.key1}:${entity.key2}"
             putToCache(key, record)
         }
@@ -163,19 +142,11 @@ class StorageDataProvider(
                 """
                 INSERT INTO cache_backup (key1, value)
                 VALUES (:key1, :value)
-                ON CONFLICT ON CONSTRAINT cache_backup_pkey
-                DO UPDATE SET value = (select jsonb_agg(items.val) from (
-                                        select jsonb_array_elements(cache_backup.value::jsonb) as val
-                                        union
-                                        select jsonb_array_elements(excluded.value::jsonb) as val) items),
-                    updated_at = :updated_at, to_delete = false
                 """
             } else -> {
                 """
                 INSERT INTO cache_backup_composite (key1, key2, value)
                 VALUES (:key1, :key2, :value)
-                ON CONFLICT ON CONSTRAINT cache_backup_composite_pkey
-                DO UPDATE SET value = :value, updated_at = :updated_at, to_delete = false
                 """
             }
         }
@@ -183,14 +154,13 @@ class StorageDataProvider(
         r2dbcTemplate.databaseClient.sql(query)
             .bind("key1", compositeKey.first)
             .bind("value", value)
-            .bind("updated_at", Timestamp.from(Instant.now()))
             .bindIfExist("key2", compositeKey.second)
             .then()
             .awaitFirstOrNull()
     }
 
-    private val CacheBackupEntity.metadata: BackupMetadata
-        get() = BackupMetadata(createdAt, updatedAt)
+    fun DatabaseClient.GenericExecuteSpec.bindIfExist(name: String, value: Any?): DatabaseClient.GenericExecuteSpec =
+        if (value != null) bind(name, value) else this
 
     private val String.compositeKey: Pair<String, String?>
         get() {
