@@ -1,18 +1,19 @@
 package com.botov.hell
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
-import kotlinx.coroutines.slf4j.MDCContext
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
 
- data class DataRecord(
+data class DataRecord(
     val value: String,
     val compositeKey: Pair<String, String?>
 )
@@ -36,7 +37,7 @@ class CacheBackupEntity(
 interface CacheManager {
     fun getOne(key: String): String
     fun put(key: String, value: String)
-    //fun getAll(keys: Set<String>): Set<String>
+    //fun getAll(key: String): Set<String>
 }
 
 class StorageDataProvider(
@@ -59,27 +60,31 @@ class StorageDataProvider(
 
             else -> {
                 val record = getFromDatabase(key).firstOrNull() ?: return null
-                restoreCache(record)
+                //putToCache(key, record.value)
                 DataRecord(record.value, record.key1 to record.key2)
             }
         }
     }
 
-    private suspend fun putToCache(key: String, record: String) {
-        try {
-            cacheManager.put(key = key, value = record)
-        } catch (ex: Exception) {
-            println("Exception while updating cache key = $key")
-            throw ex
+    private fun putToCache(key: String, record: String) {
+        synchronized(this) {
+            try {
+                cacheManager.put(key = key, value = record)
+            } catch (ex: Exception) {
+                println("Exception while updating cache key = $key")
+                throw ex
+            }
         }
     }
 
-    private suspend fun getFromCache(key: String): String? {
-        return try {
-            cacheManager.getOne(key)
-        } catch (ex: Exception) {
-            println("Exception while accessing cache key = $key")
-            null
+    private fun getFromCache(key: String): String? {
+        synchronized(this) {
+            return try {
+                cacheManager.getOne(key)
+            } catch (ex: Exception) {
+                println("Exception while accessing cache key = $key")
+                null
+            }
         }
     }
 
@@ -122,13 +127,6 @@ class StorageDataProvider(
         }
 
         return@coroutineScope entities.merge().toList()
-    }
-
-    private suspend fun restoreCache(entity: CacheBackupEntity) {
-        GlobalScope.launch(Dispatchers.IO + MDCContext()) {
-            val key = if (entity.key2 == null) entity.key1 else "${entity.key1}:${entity.key2}"
-            putToCache(key, entity.value)
-        }
     }
 
     private suspend fun putToDatabase(key: String, value: String) {
