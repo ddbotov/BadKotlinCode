@@ -12,10 +12,6 @@ import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
 
-data class CacheRecord(
-    val value: String,
-)
-
 data class DataRecord(
     val value: String,
     val compositeKey: Pair<String, String?>
@@ -35,12 +31,11 @@ class CacheBackupEntity(
         if (value != other.value) return false
         return true
     }
-
 }
 
 interface CacheManager {
-    fun <T> getOne(key: String): T?
-    fun put(key: String, value: CacheRecord)
+    fun getOne(key: String): String
+    fun put(key: String, value: String)
 }
 
 class StorageDataProvider(
@@ -52,14 +47,14 @@ class StorageDataProvider(
     suspend fun <T> put(key: String, value: T) {
         putToDatabase(key, value.toString())
         val existed = getFromDatabase(key).first()
-        putToCache(key, CacheRecord(existed.value))
+        putToCache(key, existed.value)
     }
 
     suspend fun <T> getOne(key: String): DataRecord? {
         val cached = getFromCache(key)
         return when {
-            cached?.value != null -> {
-                DataRecord(cached.value, key.compositeKey)
+            cached != null -> {
+                DataRecord(cached, key.compositeKey)
             }
 
             else -> {
@@ -70,7 +65,7 @@ class StorageDataProvider(
         }
     }
 
-    private suspend fun putToCache(key: String, record: CacheRecord) {
+    private suspend fun putToCache(key: String, record: String) {
         try {
             cacheManager.put(key = key, value = record)
         } catch (ex: Exception) {
@@ -79,9 +74,9 @@ class StorageDataProvider(
         }
     }
 
-    private suspend fun getFromCache(key: String): CacheRecord? {
+    private suspend fun getFromCache(key: String): String? {
         return try {
-            cacheManager.getOne<CacheRecord>(key)
+            cacheManager.getOne(key)
         } catch (ex: Exception) {
             println("Exception while accessing cache shard '$shardName', key = $key")
             null
@@ -131,9 +126,8 @@ class StorageDataProvider(
 
     private suspend fun restoreCache(entity: CacheBackupEntity) {
         GlobalScope.launch(Dispatchers.IO + MDCContext()) {
-            val record = CacheRecord(entity.value)
             val key = if (entity.key2 == null) entity.key1 else "${entity.key1}:${entity.key2}"
-            putToCache(key, record)
+            putToCache(key, entity.value)
         }
     }
 
