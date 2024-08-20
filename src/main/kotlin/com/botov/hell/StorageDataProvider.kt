@@ -7,21 +7,17 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.reactive.asFlow
 import kotlinx.coroutines.reactive.awaitFirstOrNull
 import kotlinx.coroutines.slf4j.MDCContext
-import org.slf4j.LoggerFactory
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate
 import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
 
-// try with resorces
-// много поточка?
-
-data class CacheRecord<T>(
-    val value: T?,
+data class CacheRecord(
+    val value: String,
 )
 
-data class DataRecord<T>(
-    val value: T,
+data class DataRecord(
+    val value: String,
     val compositeKey: Pair<String, String?>
 )
 
@@ -44,9 +40,7 @@ class CacheBackupEntity(
 
 interface CacheManager {
     fun <T> getOne(key: String): T?
-    fun put(key: String, value: CacheRecord<String>)
-    fun <T> deserialize(it: String, clazz: Class<T>): T
-    fun <T> serialize(value: T): String
+    fun put(key: String, value: CacheRecord)
 }
 
 class StorageDataProvider(
@@ -56,33 +50,27 @@ class StorageDataProvider(
 ) {
 
     suspend fun <T> put(key: String, value: T) {
-        val serializedValue = cacheManager.serialize(value)
-        putToDatabase(key, serializedValue)
+        putToDatabase(key, value.toString())
         val existed = getFromDatabase(key).first()
         putToCache(key, CacheRecord(existed.value))
     }
 
-    suspend fun <T> getOne(key: String, clazz: Class<T>): DataRecord<T>? =
-        getRecord(key) { cacheManager.deserialize(it, clazz) }
-
-    private suspend fun <T> getRecord(key: String, action: (String) -> T): DataRecord<T>? {
+    suspend fun <T> getOne(key: String): DataRecord? {
         val cached = getFromCache(key)
         return when {
             cached?.value != null -> {
-                val obj = action.invoke(cached.value)
-                DataRecord(obj, key.compositeKey)
+                DataRecord(cached.value, key.compositeKey)
             }
 
             else -> {
                 val record = getFromDatabase(key).firstOrNull() ?: return null
-                val obj = action.invoke(record.value)
                 restoreCache(record)
-                DataRecord(obj, record.key1 to record.key2)
+                DataRecord(record.value, record.key1 to record.key2)
             }
         }
     }
 
-    private suspend fun putToCache(key: String, record: CacheRecord<String>) {
+    private suspend fun putToCache(key: String, record: CacheRecord) {
         try {
             cacheManager.put(key = key, value = record)
         } catch (ex: Exception) {
@@ -91,9 +79,9 @@ class StorageDataProvider(
         }
     }
 
-    private suspend fun getFromCache(key: String): CacheRecord<String>? {
+    private suspend fun getFromCache(key: String): CacheRecord? {
         return try {
-            cacheManager.getOne<CacheRecord<String>>(key)
+            cacheManager.getOne<CacheRecord>(key)
         } catch (ex: Exception) {
             println("Exception while accessing cache shard '$shardName', key = $key")
             null
