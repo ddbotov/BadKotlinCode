@@ -12,7 +12,7 @@ import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
 
-data class DataRecord(
+ data class DataRecord(
     val value: String,
     val compositeKey: Pair<String, String?>
 )
@@ -36,10 +36,10 @@ class CacheBackupEntity(
 interface CacheManager {
     fun getOne(key: String): String
     fun put(key: String, value: String)
+    //fun getAll(keys: Set<String>): Set<String>
 }
 
 class StorageDataProvider(
-    val shardName: String,
     val cacheManager: CacheManager,
     private val r2dbcTemplate: R2dbcEntityTemplate
 ) {
@@ -69,7 +69,7 @@ class StorageDataProvider(
         try {
             cacheManager.put(key = key, value = record)
         } catch (ex: Exception) {
-            println("Exception while updating cache shard '$shardName' key = $key")
+            println("Exception while updating cache key = $key")
             throw ex
         }
     }
@@ -78,7 +78,7 @@ class StorageDataProvider(
         return try {
             cacheManager.getOne(key)
         } catch (ex: Exception) {
-            println("Exception while accessing cache shard '$shardName', key = $key")
+            println("Exception while accessing cache key = $key")
             null
         }
     }
