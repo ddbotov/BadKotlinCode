@@ -13,6 +13,9 @@ import org.springframework.data.relational.core.query.Criteria.where
 import org.springframework.data.relational.core.query.Query
 import org.springframework.r2dbc.core.DatabaseClient
 
+// try with resorces
+// много поточка?
+
 data class CacheRecord<T>(
     val value: T?,
 )
@@ -22,11 +25,22 @@ data class DataRecord<T>(
     val compositeKey: Pair<String, String?>
 )
 
-data class CacheBackupEntity(
+class CacheBackupEntity(
     val key1: String,
     val key2: String?,
     val value: String
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        other as CacheBackupEntity
+
+        if (key1 != other.key1) return false
+        if (key2 != other.key2) return false
+        if (value != other.value) return false
+        return true
+    }
+
+}
 
 interface CacheManager {
     fun <T> getOne(key: String): T?
@@ -72,7 +86,7 @@ class StorageDataProvider(
         try {
             cacheManager.put(key = key, value = record)
         } catch (ex: Exception) {
-            logger.error("Exception while updating cache shard '$shardName' key = $key", ex)
+            println("Exception while updating cache shard '$shardName' key = $key")
             throw ex
         }
     }
@@ -81,7 +95,7 @@ class StorageDataProvider(
         return try {
             cacheManager.getOne<CacheRecord<String>>(key)
         } catch (ex: Exception) {
-            logger.error("Exception while accessing cache shard '$shardName', key = $key", ex)
+            println("Exception while accessing cache shard '$shardName', key = $key")
             null
         }
     }
@@ -164,12 +178,8 @@ class StorageDataProvider(
 
     private val String.compositeKey: Pair<String, String?>
         get() {
-            val keys: List<String> = this.split(compositeKeyDelimiter)
+            val keys: List<String> = this.split(":")
             return if (keys.size == 1) keys[0] to null else keys[0] to keys[1]
         }
 
-    companion object {
-        private const val compositeKeyDelimiter = ":"
-        private val logger = LoggerFactory.getLogger(StorageDataProvider.javaClass)
-    }
 }
