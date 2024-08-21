@@ -29,7 +29,6 @@ class CacheBackupEntity(
 
         if (key1 != other.key1) return false
         if (key2 != other.key2) return false
-        if (value != other.value) return false
         return true
     }
 }
